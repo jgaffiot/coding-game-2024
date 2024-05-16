@@ -1,0 +1,142 @@
+[tool.poetry]
+name = "poker chip race"
+version = "0.1.0"
+description = "The Poker Chip Race challenge on Coding Game"
+authors = ["jgaffiot <j.gaffiot@laposte.net>"]
+license = "The Unlicense"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4.2"
+ruff = "^0.4.4"
+mypy = "^1.10.0"
+ipython = "^8.24.0"
+ipdb = "^0.13.13"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.black]
+target-version = ["py310"]
+skip-string-normalization = true
+exclude = '''
+/(
+    \.git
+)/
+'''
+
+
+[tool.ruff]
+target-version = "py310"
+fix = true
+line-length = 88  # Same as Black
+exclude = [
+    ".git",
+    ".git-rewrite",
+    ".mypy_cache",
+    ".pytype",
+    ".ruff_cache",
+    "__pypackages__",
+    ".venv",
+    "venv",
+    "env",
+]
+
+[tool.ruff.lint]
+fixable = ["ALL"] # Allow autofix for all enabled rules
+unfixable = []
+# Rule selection
+select = [
+ "F", "E", "C90", "N", "D", "UP", "YTT", "ANN", "ASYNC", "S", "BLE",
+ "FBT", "B", "A", "C4", "DTZ", "T10", "DJ", "EXE", "FA", "ISC",
+ "ICN", "G", "INP", "PIE", "PYI", "PT", "Q", "RSE", "RET", "SLF", "SLOT", "SIM",
+ "TID", "TCH", "INT", "ARG", "PTH", "TD", "FIX", "ERA", "PD", "PGH", "PL", "TRY",
+ "FLY", "NPY", "AIR", "PERF", "RUF", "T20", "I"
+]
+# Not selected:
+# - CPY (flake8-copyright) no need of a copyright per file
+# - COM (flake8-commas) handled by black
+# - EM  (flake8-errmsg) too little gain for the cost
+
+ignore = [
+    "D203", # 1 blank line required before class docstring
+    "D212", # Multi-line docstring summary should start at the first line
+    "PTH123", # builtin open() should be replaced by Path.open()
+    "TRY003", # Avoid specifying long messages outside the exception class
+    "ANN101", # Missing type annotation for self in method
+    "ANN102", # Missing type annotation for cls in classmethod
+    "G004", # Logging statement uses f-string
+    "PD013", # `.melt` is preferred to `.stack`; provides same functionality (WRONG!)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["D104"] # Ignore "missing docstring in public package" in all `__init__.py` files
+"*/test/**/*.py" = [  # Ignore rules necessary for tests
+    "INP001", # Ignore "File is part of an implicit namespace package. Add an `__init__.py`."
+    "S101", # Ignore "Use of `assert` detected" because pytest relies on assert
+    "N802", # Ignore "Function name should be lowercase" because test function are non-standard
+#     "ARG", # Unused function args -> fixtures nevertheless are functionally relevant...
+#     "FBT", # Don't care about booleans as positional arguments in tests, e.g. via @pytest.mark.parametrize()
+    "PLR2004", # Ignore "Magic value used in comparison"
+#     "S311", # Standard pseudo-random generators are not suitable for cryptographic purposes
+]
+
+
+[tool.ruff.lint.flake8-annotations]
+mypy-init-return = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+
+[tool.mypy]
+python_version = "3.10"
+exclude = [
+    "test",
+    "env",
+]
+#mypy_path = [""]
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+#module = []
+#ignore_missing_imports = true
+
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+#testpaths = []
+#pythonpath = []
+addopts = [
+    "--import-mode=prepend",
+    "-vv",
+    "--exitfirst",
+    "--capture=no",
+    "--showlocals",
+    "--forked",
+    "--cov-config=.coverage/coveragerc",
+    "--cov=maze_cli",
+    "--cov=app",
+    "--cov-report=html",
+    "--html=.pytest_cache/report.html",
+]
+#      -s
+python_files = "*.py"
+
+norecursedirs = [
+    "dist",
+    "doc",
+    "__pycache__",
+]
+
+# Daily options
+#  --failed-first: relaunch all tests but failed tests first
+#  --pdb: launch pdb after first fail
+#  -k <regex>: launch only test matching the regex
+
