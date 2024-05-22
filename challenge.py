@@ -1,8 +1,9 @@
 """CodingGames challenge: Poker Chip Race."""
 
 import sys
+from abc import ABC, abstractmethod
 from math import atan2, cos, pi, sin, sqrt
-from typing import Union
+from typing import Any
 
 import numpy as np
 from scipy.optimize import minimize
@@ -16,9 +17,81 @@ MY_ID = int(input())  # 0 to 4 (?)
 OIL_ID = -1
 
 
-def debug(string: str) -> None:
+def debug(stuff: Any) -> None:
     """Print to stderr to debug and avoid conflict with instruction printing."""
-    print(string, file=sys.stderr, flush=True)
+    print(stuff, file=sys.stderr, flush=True)
+
+
+class Dist(ABC):
+    """A distribution and its jacobian."""
+
+    @abstractmethod
+    def pdf(self, x_: np.array, *args) -> np.array:
+        """Return the probability density function."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def jac(self, x_: np.array, *args) -> np.array:
+        """Return the Jacobian."""
+        raise NotImplementedError
+
+
+class NormalDist(Dist):
+    """The normal multivariate distribution."""
+
+    def __init__(self, x0: np.array, sig: float) -> None:
+        """Initialize self."""
+        self.x0 = x0
+        self.sig = sig
+        self.dist = multivariate_normal(x0, sig)
+
+    def pdf(self, x_: np.array, *args) -> np.array:
+        """Return the probability density function."""
+        return self.dist.pdf(x_)
+
+    def jac(self, x_: np.array, *args) -> np.array:
+        """Return the Jacobian."""
+        return self.dist.pdf(x_) * (x_ - self.x0) / (self.sig**2)
+
+
+class ErfDist(Dist):
+    """The erf 2-dim distribution."""
+
+    def __init__(self, x0: np.array, sig: float) -> None:
+        """Initialize self."""
+        self.x0 = x0
+        self.sig = sig
+        self.cst = 2 / np.sqrt(np.pi)
+
+    def pdf(self, x_: np.array, *args) -> np.array:
+        """Return the probability density function."""
+        return erf((x_[0] - self.x0[0]) / self.sig) + erf(
+            (x_[1] - self.x0[1]) / self.sig
+        )
+
+    def jac(self, x_: np.array, *args) -> np.array:
+        """Return the Jacobian."""
+        return self.cst * np.exp(-(x_**2))
+
+
+class ErfcDist(Dist):
+    """The erfc = 1 - erf 2-dim distribution."""
+
+    def __init__(self, x0: np.array, sig: float) -> None:
+        """Initialize self."""
+        self.x0 = x0
+        self.sig = sig
+        self.cst = 2 / np.sqrt(np.pi)
+
+    def pdf(self, x_: np.array, *args) -> np.array:
+        """Return the probability density function."""
+        return erfc((x_[0] - self.x0[0]) / self.sig) + erfc(
+            (x_[1] - self.x0[1]) / self.sig
+        )
+
+    def jac(self, x_: np.array, *args) -> np.array:
+        """Return the Jacobian."""
+        return -self.cst * np.exp(-(x_**2))
 
 
 class Vec2:
@@ -102,16 +175,16 @@ class Point(Vec2):
         theta = self.theta
         self.x += dist * cos(theta)
         self.y += dist * sin(theta)
-        self.x = min(max(0, self.x), X_MAX)
-        self.y = min(max(0, self.y), Y_MAX)
+        self.x = min(max(0.0, self.x), X_MAX)
+        self.y = min(max(0.0, self.y), Y_MAX)
 
     def __add__(self, other: "Speed") -> "Point":
         """Return self + other."""
-        return Vec2(self.x + other.x, self.y + other.y)
+        return Point(self.x + other.x, self.y + other.y)
 
     def __sub__(self, other: "Speed") -> "Point":
         """Return self - other."""
-        return Vec2(self.x - other.x, self.y - other.y)
+        return Point(self.x - other.x, self.y - other.y)
 
 
 class Speed(Vec2):
@@ -134,15 +207,15 @@ def distance(a: Point, b: Point) -> float:
 class Chip:
     """A Chip on the play field."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize self."""
         self.id: int = -1
         self.player = -2
-        self.radius = 0.0
+        self.r = 0.0
         self.p: Point = Point(-1, -1)
         self.v: Speed = Speed(0, 0)
-        # self.targets: Dict[int, Chip] = {}
-        # self.opponents: Dict[int, Chip] = {}
+        # self.targets: dict[int, Chip] = {}
+        # self.opponents: dict[int, Chip] = {}
 
     @classmethod
     def from_string(cls, string: str) -> "Chip":
@@ -170,11 +243,11 @@ class Chip:
 
     def __repr__(self) -> str:
         """Return repr(self)."""
-        return f"Chip({self.id}, {self.p.x}, {self.p.y}, {self.pv}, {self.nb_buster})"
+        return f"Chip({self.id}, {self.player}, {self.r}, {self.p}, {self.v})"
 
     def __str__(self) -> str:
         """Return str(self)."""
-        return f"Chip {self.id}, {self.p}, pv={self.pv}, nb={self.nb_buster}"
+        return f"Chip {self.id}, {self.player}, {self.r}, {self.p}, {self.v}"
 
     @property
     def area(self) -> float:
@@ -196,20 +269,20 @@ class Chip:
         """Update the current entity with new data."""
         self.id = id_
         self.player = player
-        self.radius = r
+        self.r = r
         self.p = Point(x, y)
         self.v = Speed(vx, vy)
 
-    def compute_dist_to_chip(self, chips: dict[int, "Chip"]) -> None:
-        """Compute the distance to the given chips."""
-        self.targets = {id_: Chip(chip, self.p) for id_, chip in chips.items()}
+    # def compute_dist_to_chip(self, chips: dict[int, "Chip"]) -> None:
+    #     """Compute the distance to the given chips."""
+    #     self.targets = {id_: self.p.dist_to(chip) for id_, chip in chips.items()}
 
-    def get_closest_target(self) -> Union[None, "Chip"]:
-        """Get the closest target if any."""
-        targets = [t for t in self.targets.values() if t.pv >= 0]
-        if targets:
-            return sorted(targets, key=lambda t: t.d)[0]
-        return None
+    # def get_closest_target(self) -> Union[None, "Chip"]:
+    #     """Get the closest target if any."""
+    #     targets = [t for t in self.targets.values() if t.pv >= 0]
+    #     if targets:
+    #         return sorted(targets, key=lambda t: t.d)[0]
+    #     return None
 
     def potential(
         self,
@@ -226,7 +299,7 @@ class Chip:
         g0 = multivariate_normal(self.p.np, sig * self.r)
         g_ = multivariate_normal(self.future.np, sig * self.r)
         z = np.dstack((x, y))
-        return sign * alpha * g0.pdf(z) + g_.pdf(z)
+        return sign * alpha * (g0.pdf(z) + g_.pdf(z))
 
     def __contains__(self, point: Point) -> bool:
         """Return True if the point is inside the chip or will be at the next point."""
@@ -256,8 +329,8 @@ def field_potential(x: np.array, y: np.array, sig: float = 10) -> np.array:
     )
 
 
-def game_loop():
-    """The game loop."""
+def game_loop() -> None:
+    """Run the game loop."""
     chip_registry: dict[int, Chip] = {}
     mine_registry: dict[int, Mine] = {}
     opponent_registry: dict[int, Opponent] = {}
@@ -273,16 +346,16 @@ def game_loop():
         entity_count = int(input())
 
         for _ in range(entity_count):
-            inputs = input().split()
-            chip = Chip.from_string(inputs)
+            inputs = input()
+            chip: Chip = Chip.from_string(inputs)
 
-            chip_registry[chip.id_] = chip
+            chip_registry[chip.id] = chip
             if chip.player == MY_ID:
-                mine_registry[chip.id_] = chip
+                mine_registry[chip.id] = chip
             elif chip.player == OIL_ID:
-                oil_registry[chip.id_] = chip
+                oil_registry[chip.id] = chip
             else:
-                opponent_registry[chip.id_] = chip
+                opponent_registry[chip.id] = chip
 
         total = sum(c.area for c in chip_registry.values())
 
@@ -303,10 +376,10 @@ def game_loop():
                 for other_id, other_chip in chip_registry.items():
                     if other_id == id_:
                         continue
-                    potential += other_chip.potential(x, y, chip.radius)
+                    potential += other_chip.potential(x, y, chip.r)
                 return potential
 
-            res = minimize(fun, chip.np, bounds=((0, X_MAX), (0, Y_MAX)))
+            res = minimize(fun, chip.p.np, bounds=((0, X_MAX), (0, Y_MAX)))
             dest = Point(res.x[0], res.x[1])
             debug(dest)
 
