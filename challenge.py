@@ -2,8 +2,8 @@
 
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from math import atan2, cos, pi, sin, sqrt
-from typing import Any
 
 import numpy as np
 from scipy.optimize import minimize
@@ -12,12 +12,16 @@ from scipy.stats import multivariate_normal
 
 X_MAX = 800
 Y_MAX = 515
+BOUNDS = np.array(((0, X_MAX), (0, Y_MAX)))
 
-MY_ID = int(input())  # 0 to 4 (?)
 OIL_ID = -1
 
 
-def debug(stuff: Any) -> None:
+Potential = Callable[[np.ndarray], float]
+Jacobian = Callable[[np.ndarray], np.ndarray]
+
+
+def debug(stuff: object) -> None:
     """Print to stderr to debug and avoid conflict with instruction printing."""
     print(stuff, file=sys.stderr, flush=True)
 
@@ -26,12 +30,12 @@ class Dist(ABC):
     """A distribution and its jacobian."""
 
     @abstractmethod
-    def pdf(self, x_: np.array, *args) -> np.array:
+    def pdf(self, x_: np.ndarray) -> float:
         """Return the probability density function."""
         raise NotImplementedError
 
     @abstractmethod
-    def jac(self, x_: np.array, *args) -> np.array:
+    def jac(self, x_: np.ndarray) -> np.ndarray:
         """Return the Jacobian."""
         raise NotImplementedError
 
@@ -39,59 +43,59 @@ class Dist(ABC):
 class NormalDist(Dist):
     """The normal multivariate distribution."""
 
-    def __init__(self, x0: np.array, sig: float) -> None:
+    def __init__(self, x0: np.ndarray, sig: float) -> None:
         """Initialize self."""
         self.x0 = x0
         self.sig = sig
         self.dist = multivariate_normal(x0, sig)
 
-    def pdf(self, x_: np.array, *args) -> np.array:
+    def pdf(self, x_: np.ndarray) -> float:
         """Return the probability density function."""
         return self.dist.pdf(x_)
 
-    def jac(self, x_: np.array, *args) -> np.array:
+    def jac(self, x_: np.ndarray) -> np.ndarray:
         """Return the Jacobian."""
-        return self.dist.pdf(x_) * (x_ - self.x0) / (self.sig**2)
+        return self.dist.pdf(x_) * (x_ - self.x0) / self.sig
 
 
 class ErfDist(Dist):
     """The erf 2-dim distribution."""
 
-    def __init__(self, x0: np.array, sig: float) -> None:
+    def __init__(self, x0: np.ndarray, sig: float) -> None:
         """Initialize self."""
         self.x0 = x0
         self.sig = sig
-        self.cst = 2 / np.sqrt(np.pi)
+        self.cst = 2 / np.sqrt(np.pi) / sig
 
-    def pdf(self, x_: np.array, *args) -> np.array:
+    def pdf(self, x_: np.ndarray) -> float:
         """Return the probability density function."""
         return erf((x_[0] - self.x0[0]) / self.sig) + erf(
             (x_[1] - self.x0[1]) / self.sig
         )
 
-    def jac(self, x_: np.array, *args) -> np.array:
+    def jac(self, x_: np.ndarray) -> np.ndarray:
         """Return the Jacobian."""
-        return self.cst * np.exp(-(x_**2))
+        return self.cst * np.exp(-(((x_ - self.x0) / self.sig) ** 2))
 
 
 class ErfcDist(Dist):
     """The erfc = 1 - erf 2-dim distribution."""
 
-    def __init__(self, x0: np.array, sig: float) -> None:
+    def __init__(self, x0: np.ndarray, sig: float) -> None:
         """Initialize self."""
         self.x0 = x0
         self.sig = sig
-        self.cst = 2 / np.sqrt(np.pi)
+        self.cst = 2 / np.sqrt(np.pi) / sig
 
-    def pdf(self, x_: np.array, *args) -> np.array:
+    def pdf(self, x_: np.ndarray) -> float:
         """Return the probability density function."""
         return erfc((x_[0] - self.x0[0]) / self.sig) + erfc(
             (x_[1] - self.x0[1]) / self.sig
         )
 
-    def jac(self, x_: np.array, *args) -> np.array:
+    def jac(self, x_: np.ndarray) -> np.ndarray:
         """Return the Jacobian."""
-        return -self.cst * np.exp(-(x_**2))
+        return -self.cst * np.exp(-(((x_ - self.x0) / self.sig) ** 2))
 
 
 class Vec2:
@@ -138,8 +142,11 @@ class Vec2:
         """Return self - other."""
         return Vec2(self.x - other.x, self.y - other.y)
 
-    def __eq__(self, other: "Vec2") -> bool:
+    def __eq__(self, other: object) -> bool:
         """Return self == other."""
+        if not isinstance(other, Vec2):
+            return NotImplemented
+
         return (
             self.x == other.x
             and self.y == other.y
@@ -178,11 +185,11 @@ class Point(Vec2):
         self.x = min(max(0.0, self.x), X_MAX)
         self.y = min(max(0.0, self.y), Y_MAX)
 
-    def __add__(self, other: "Speed") -> "Point":
+    def __add__(self, other: "Speed") -> "Point":  # type: ignore[override]
         """Return self + other."""
         return Point(self.x + other.x, self.y + other.y)
 
-    def __sub__(self, other: "Speed") -> "Point":
+    def __sub__(self, other: "Speed") -> "Point":  # type: ignore[override]
         """Return self - other."""
         return Point(self.x - other.x, self.y - other.y)
 
@@ -225,15 +232,12 @@ class Chip:
             ("id_", "player", "r", "x", "y", "vx", "vy"), string.split(), strict=False
         )
         new.update(
-            **{
-                k: int(v) if k in ("id_", "player") else float(v)
-                for k, v in pars.items()
-            }
+            **{k: int(v) if k in ("id_", "player") else float(v) for k, v in pars}  # type: ignore[arg-type]
         )
         return new
 
     @classmethod
-    def from_data(
+    def from_data(  # noqa: PLR0913
         cls, id_: int, player: int, r: float, x: float, y: float, vx: float, vy: float
     ) -> "Chip":
         """Return a new Chip fully initialized with the given data."""
@@ -249,6 +253,10 @@ class Chip:
         """Return str(self)."""
         return f"Chip {self.id}, {self.player}, {self.r}, {self.p}, {self.v}"
 
+    def __contains__(self, point: Point) -> bool:
+        """Return True if the point is inside the chip or will be at the next point."""
+        return self.dist_to(point) < self.r or self.future.dist_to(point) < self.r
+
     @property
     def area(self) -> float:
         """The chip area."""
@@ -263,7 +271,7 @@ class Chip:
         """Return the distance to a given Point."""
         return self.p.dist_to(p)
 
-    def update(
+    def update(  # noqa: PLR0913
         self, id_: int, player: int, r: float, x: float, y: float, vx: float, vy: float
     ) -> None:
         """Update the current entity with new data."""
@@ -284,26 +292,46 @@ class Chip:
     #         return sorted(targets, key=lambda t: t.d)[0]
     #     return None
 
-    def potential(
+    # def potential(
+    #     self,
+    #     x: np.ndarray,
+    #     y: np.ndarray,
+    #     other_radius: float,
+    #     sig: float = 10,
+    #     alpha: float = 100,
+    # ) -> np.ndarray:
+    #     """Compute the chip potential."""
+    #     if other_radius == self.r:
+    #         return 0
+    #     sign = 1 if self.r > other_radius else -1
+    #     g0 = multivariate_normal(self.p.np, sig * self.r)
+    #     g_ = multivariate_normal(self.future.np, sig * self.r)
+    #     z = np.dstack((x, y))
+    #     return sign * alpha * (g0.pdf(z) + g_.pdf(z))
+
+    def make_potential(
         self,
-        x: np.array,
-        y: np.array,
         other_radius: float,
         sig: float = 10,
         alpha: float = 100,
-    ) -> np.array:
-        """Compute the chip potential."""
+    ) -> tuple[Potential, Jacobian]:
+        """Return the PDF and the Jacobian of the chip potential."""
         if other_radius == self.r:
-            return 0
-        sign = 1 if self.r > other_radius else -1
-        g0 = multivariate_normal(self.p.np, sig * self.r)
-        g_ = multivariate_normal(self.future.np, sig * self.r)
-        z = np.dstack((x, y))
-        return sign * alpha * (g0.pdf(z) + g_.pdf(z))
+            return lambda x_: 0.0, lambda x_: np.array([0.0, 0.0])  # noqa: ARG005
 
-    def __contains__(self, point: Point) -> bool:
-        """Return True if the point is inside the chip or will be at the next point."""
-        return self.dist_to(point) < self.r or self.future.dist_to(point) < self.r
+        sign = 1 if self.r > other_radius else -1
+        current = NormalDist(self.p.np, sig * self.r)
+        future = NormalDist(self.future.np, sig * self.r)
+
+        def pdf(x_: np.ndarray) -> float:
+            """Return the chip potential."""
+            return sign * alpha * (current.pdf(x_) + future.pdf(x_))
+
+        def jac(x_: np.ndarray) -> np.ndarray:
+            """Return the chip Jacobian."""
+            return sign * alpha * (current.jac(x_) + future.jac(x_))
+
+        return pdf, jac
 
 
 class Mine(Chip):
@@ -318,30 +346,51 @@ class Oil(Chip):
     """An oil chip."""
 
 
-def field_potential(x: np.array, y: np.array, sig: float = 10) -> np.array:
-    """Compute the field potential."""
-    return (
-        2.0
-        + erfc(x / sig)
-        + erfc(y / sig)
-        + erf((x - X_MAX) / sig)
-        + erf((y - Y_MAX) / sig)
-    )
+def make_field_potential(sig: float = 10) -> tuple[Potential, Jacobian]:
+    """Return the PDF and the Jacobian of the field potential."""
+    bottom_left = ErfDist(np.array([0, 0]), sig)
+    top_right = ErfcDist(np.array([X_MAX, Y_MAX]), sig)
+
+    def pdf(x_: np.ndarray) -> float:
+        """Return the field potential."""
+        return 2.0 + bottom_left.pdf(x_) + top_right.pdf(x_)
+
+    def jac(x_: np.ndarray) -> np.ndarray:
+        """Return the field Jacobian."""
+        return bottom_left.jac(x_) + top_right.jac(x_)
+
+    return pdf, jac
+
+
+# def field_potential(x: np.ndarray, y: np.ndarray, sig: float = 10) -> np.ndarray:
+#     """Compute the field potential."""
+#     return (
+#         2.0
+#         + erfc(x / sig)
+#         + erfc(y / sig)
+#         + erf((x - X_MAX) / sig)
+#         + erf((y - Y_MAX) / sig)
+#     )
 
 
 def game_loop() -> None:
     """Run the game loop."""
+    my_id = int(input())  # 0 to 4 (?)
+
     chip_registry: dict[int, Chip] = {}
-    mine_registry: dict[int, Mine] = {}
-    opponent_registry: dict[int, Opponent] = {}
-    oil_registry: dict[int, Oil] = {}
+    mine_registry: dict[int, Chip] = {}
+    opponent_registry: dict[int, Chip] = {}
+    oil_registry: dict[int, Chip] = {}
+
+    field_pot = make_field_potential(sig=10)
 
     turn_index = 0
     while True:
         turn_index += 1
 
         # Load the visible entities
-        player_chip_count = int(input())  # The number of chips under your control
+        # The number of chips under your control
+        player_chip_count = int(input())  # noqa: F841
         # The total number of entities on the table, including your chips
         entity_count = int(input())
 
@@ -350,7 +399,7 @@ def game_loop() -> None:
             chip: Chip = Chip.from_string(inputs)
 
             chip_registry[chip.id] = chip
-            if chip.player == MY_ID:
+            if chip.player == my_id:
                 mine_registry[chip.id] = chip
             elif chip.player == OIL_ID:
                 oil_registry[chip.id] = chip
@@ -360,26 +409,28 @@ def game_loop() -> None:
         total = sum(c.area for c in chip_registry.values())
 
         # My chip's actions
-        for id_, chip in mine_registry.items():
-            chip: Mine
-
+        for chip_id, chip in mine_registry.items():
             # Fat enough
             if chip.area >= total / 2.0:
                 print("WAIT")
                 continue
 
             # Compute the potential and minimize it
-            def fun(x_: np.array, *args, id_=id_, chip=chip):
-                x = x_[0]
-                y = x_[1]
-                potential = field_potential(x, y)
-                for other_id, other_chip in chip_registry.items():
-                    if other_id == id_:
-                        continue
-                    potential += other_chip.potential(x, y, chip.r)
-                return potential
+            other_chip_pot: tuple[tuple[Potential, Jacobian], ...] = tuple(
+                chip_.make_potential(chip.r, sig=10)
+                for id_, chip_ in chip_registry.items()
+                if id_ != chip_id
+            )
 
-            res = minimize(fun, chip.p.np, bounds=((0, X_MAX), (0, Y_MAX)))
+            def pdf(x_: np.ndarray, chip_pots: tuple = other_chip_pot) -> float:
+                """Return the field potential."""
+                return field_pot[0](x_) + np.sum([p[0](x_) for p in chip_pots])
+
+            def jac(x_: np.ndarray, other_pot: tuple = other_chip_pot) -> np.ndarray:
+                """Return the field Jacobian."""
+                return field_pot[1](x_) + np.sum([p[1](x_) for p in other_pot])
+
+            res = minimize(pdf, chip.p.np, bounds=BOUNDS, jac=jac)
             dest = Point(res.x[0], res.x[1])
             debug(dest)
 

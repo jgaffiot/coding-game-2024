@@ -18,6 +18,7 @@ ruff = "^0.4.4"
 mypy = "^1.10.0"
 ipython = "^8.24.0"
 ipdb = "^0.13.13"
+numdifftools = "^0.9.41"
 
 
 [tool.poetry.group.test.dependencies]
@@ -79,6 +80,9 @@ ignore = [
     "ANN102", # Missing type annotation for cls in classmethod
     "G004", # Logging statement uses f-string
     "PD013", # `.melt` is preferred to `.stack`; provides same functionality (WRONG!)
+    # Special for the challenge
+    "ERA001", # Found commented-out code (normal in R&D phase)
+    "T201", # `print` found (required by the challenge)
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -111,8 +115,12 @@ exclude = [
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-#module = []
-#ignore_missing_imports = true
+module = [
+    "scipy.optimize",
+    "scipy.special",
+    "scipy.stats",
+]
+ignore_missing_imports = true
 
 
 [tool.pytest.ini_options]
@@ -145,4 +153,3 @@ norecursedirs = [
 #  --failed-first: relaunch all tests but failed tests first
 #  --pdb: launch pdb after first fail
 #  -k <regex>: launch only test matching the regex
-
