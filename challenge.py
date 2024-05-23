@@ -319,17 +319,22 @@ class Chip:
         if other_radius == self.r:
             return lambda x_: 0.0, lambda x_: np.array([0.0, 0.0])  # noqa: ARG005
 
-        sign = 1 if self.r > other_radius else -1
+        if self.r > other_radius:
+            sign = -1
+            sig *= alpha
+        else:
+            sign = 1
+
         current = NormalDist(self.p.np, sig * self.r)
         future = NormalDist(self.future.np, sig * self.r)
 
         def pdf(x_: np.ndarray) -> float:
             """Return the chip potential."""
-            return sign * alpha * (current.pdf(x_) + future.pdf(x_))
+            return sign * (current.pdf(x_) + future.pdf(x_))
 
         def jac(x_: np.ndarray) -> np.ndarray:
             """Return the chip Jacobian."""
-            return sign * alpha * (current.jac(x_) + future.jac(x_))
+            return sign * (current.jac(x_) + future.jac(x_))
 
         return pdf, jac
 
@@ -412,6 +417,7 @@ def game_loop() -> None:
         for chip_id, chip in mine_registry.items():
             # Fat enough
             if chip.area >= total / 2.0:
+                debug("Fat enough!")
                 print("WAIT")
                 continue
 
@@ -430,11 +436,17 @@ def game_loop() -> None:
                 """Return the field Jacobian."""
                 return field_pot[1](x_) + np.sum([p[1](x_) for p in other_pot])
 
+            # X, Y = np.meshgrid(
+            # np.linspace(0, X_MAX, 1000), np.linspace(0, Y_MAX, 1000))
+            # Z: np.ndarray = pdf[0](np.dstack((X, Y)))
+            # print(Z.tolist())
+
             res = minimize(pdf, chip.p.np, bounds=BOUNDS, jac=jac)
             dest = Point(res.x[0], res.x[1])
-            debug(dest)
+            debug(f"{dest=}")
 
             if dest in chip:
+                debug(f"dest in chip: {dest} in {chip.p}+-{chip.r}")
                 print("WAIT")
             else:
                 print(f"{res.x[0]} {res.x[1]}")
