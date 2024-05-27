@@ -3,19 +3,21 @@
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from math import atan2, cos, pi, sin, sqrt
+from math import atan2, cos, isclose, pi, sin, sqrt
+from typing import Union
 
 import numpy as np
 from scipy.optimize import minimize
 from scipy.special import erf, erfc
 from scipy.stats import multivariate_normal
 
+VERBOSE = True
+
 X_MAX = 800
 Y_MAX = 515
 BOUNDS = np.array(((0, X_MAX), (0, Y_MAX)))
 
 OIL_ID = -1
-
 
 Potential = Callable[[np.ndarray], float]
 Jacobian = Callable[[np.ndarray], np.ndarray]
@@ -24,6 +26,14 @@ Jacobian = Callable[[np.ndarray], np.ndarray]
 def debug(stuff: object) -> None:
     """Print to stderr to debug and avoid conflict with instruction printing."""
     print(stuff, file=sys.stderr, flush=True)
+
+
+def get_input() -> str:
+    """Get an input."""
+    val = input()
+    if VERBOSE:
+        debug(val)
+    return val
 
 
 class Dist(ABC):
@@ -69,9 +79,7 @@ class ErfDist(Dist):
 
     def pdf(self, x_: np.ndarray) -> float:
         """Return the probability density function."""
-        return erf((x_[0] - self.x0[0]) / self.sig) + erf(
-            (x_[1] - self.x0[1]) / self.sig
-        )
+        return np.max(erf((x_ - self.x0) / self.sig), axis=len(x_.shape) - 1)
 
     def jac(self, x_: np.ndarray) -> np.ndarray:
         """Return the Jacobian."""
@@ -89,9 +97,7 @@ class ErfcDist(Dist):
 
     def pdf(self, x_: np.ndarray) -> float:
         """Return the probability density function."""
-        return erfc((x_[0] - self.x0[0]) / self.sig) + erfc(
-            (x_[1] - self.x0[1]) / self.sig
-        )
+        return np.max(erfc((x_ - self.x0) / self.sig), axis=len(x_.shape) - 1)
 
     def jac(self, x_: np.ndarray) -> np.ndarray:
         """Return the Jacobian."""
@@ -107,7 +113,7 @@ class Vec2:
         self.y = float(y)
 
     @property
-    def r(self) -> float:
+    def rho(self) -> float:
         """Modulus."""
         return sqrt(self.x * self.x + self.y * self.y)
 
@@ -117,14 +123,22 @@ class Vec2:
         return atan2(self.y, self.x)
 
     @classmethod
-    def from_polar(cls, r: float, theta: float) -> "Vec2":
+    def from_polar(cls, rho: float, theta: float) -> "Vec2":
         """Create a Vec2 from polar coordinates."""
-        return cls(r * cos(theta), r * sin(theta))
+        return cls(rho * cos(theta), rho * sin(theta))
 
     @property
     def np(self) -> np.ndarray:
         """Return the vector as a numpy array."""
         return np.array([self.x, self.y])
+
+    def unit(self) -> "Vec2":
+        """Return the unit vector co-linear with self."""
+        return self / self.rho
+
+    def rot(self, theta: float) -> "Vec2":
+        """Return a vector rotated by the given angle in radian."""
+        return Vec2.from_polar(self.rho, (self.theta + theta) % (2 * pi))
 
     def __repr__(self) -> str:
         """Return repr(self)."""
@@ -154,12 +168,24 @@ class Vec2:
         )
 
     def __mul__(self, scalar: float) -> "Vec2":
-        """Return self * other."""
+        """Return self * scalar."""
         return Vec2(self.x * scalar, self.y * scalar)
 
-    def __div__(self, scalar: float) -> "Vec2":
+    def __matmul__(self, other: "Vec2") -> float:
+        """Return self * other."""
+        return self.x * other.x + self.y * other.y
+
+    def __truediv__(self, scalar: float) -> "Vec2":
         """Return self / other."""
         return Vec2(self.x / scalar, self.y / scalar)
+
+    def __copy__(self) -> "Vec2":
+        """Return copy(self)."""
+        return self.copy()
+
+    def copy(self) -> "Vec2":
+        """Return self.copy()."""
+        return Vec2(self.x, self.y)
 
 
 class Point(Vec2):
@@ -189,7 +215,7 @@ class Point(Vec2):
         """Return self + other."""
         return Point(self.x + other.x, self.y + other.y)
 
-    def __sub__(self, other: "Speed") -> "Point":  # type: ignore[override]
+    def __sub__(self, other: Union["Speed", "Point"]) -> "Point":  # type: ignore[override]
         """Return self - other."""
         return Point(self.x - other.x, self.y - other.y)
 
@@ -263,9 +289,28 @@ class Chip:
         return pi * self.r * self.r
 
     @property
-    def future(self) -> Point:
-        """Return the future point."""
-        return self.p + self.v
+    def future(self) -> "Chip":
+        """Return the future chip."""
+        bounds = BOUNDS + np.array(((self.r, X_MAX - self.r), (self.r, Y_MAX - self.r)))
+
+        p = self.p + self.v
+        v = self.v.copy()
+
+        if p.x < bounds[0][0]:
+            p.x = 2 * bounds[0][0] - p.x
+            v.x = -v.x
+        elif p.x > bounds[0][1]:
+            p.x = 2 * bounds[0][1] - p.x
+            v.x = -v.x
+
+        if p.y < bounds[1][0]:
+            p.y = 2 * bounds[1][0] - p.y
+            v.y = -v.y
+        elif p.y > bounds[1][1]:
+            p.y = 2 * bounds[1][1] - p.y
+            v.y = -v.y
+
+        return Chip.from_data(self.id, self.player, self.r, p.x, p.y, v.x, v.y)
 
     def dist_to(self, p: Point) -> float:
         """Return the distance to a given Point."""
@@ -292,49 +337,34 @@ class Chip:
     #         return sorted(targets, key=lambda t: t.d)[0]
     #     return None
 
-    # def potential(
-    #     self,
-    #     x: np.ndarray,
-    #     y: np.ndarray,
-    #     other_radius: float,
-    #     sig: float = 10,
-    #     alpha: float = 100,
-    # ) -> np.ndarray:
-    #     """Compute the chip potential."""
-    #     if other_radius == self.r:
-    #         return 0
-    #     sign = 1 if self.r > other_radius else -1
-    #     g0 = multivariate_normal(self.p.np, sig * self.r)
-    #     g_ = multivariate_normal(self.future.np, sig * self.r)
-    #     z = np.dstack((x, y))
-    #     return sign * alpha * (g0.pdf(z) + g_.pdf(z))
-
     def make_potential(
         self,
         other_radius: float,
-        sig: float = 10,
-        alpha: float = 100,
+        sig: float = 0.1,
+        alpha: float = 2,
     ) -> tuple[Potential, Jacobian]:
         """Return the PDF and the Jacobian of the chip potential."""
         if other_radius == self.r:
-            return lambda x_: 0.0, lambda x_: np.array([0.0, 0.0])  # noqa: ARG005
+            return lambda x_: np.zeros(x_.shape[:-1]), lambda x_: np.array(  # type: ignore[return-value]
+                [np.zeros(x_.shape[:-1]), np.zeros(x_.shape[:-1])]
+            )
 
         if self.r > other_radius:
             sign = -1
-            sig *= alpha
+            g1 = NormalDist(self.future.p.np, sig * alpha * self.r)
+            g2 = NormalDist(self.future.future.p.np, sig * self.r)
         else:
             sign = 1
-
-        current = NormalDist(self.p.np, sig * self.r)
-        future = NormalDist(self.future.np, sig * self.r)
+            g1 = NormalDist(self.p.np, sig * self.r)
+            g2 = NormalDist(self.future.p.np, sig * self.r)
 
         def pdf(x_: np.ndarray) -> float:
             """Return the chip potential."""
-            return sign * (current.pdf(x_) + future.pdf(x_))
+            return sign * (g1.pdf(x_) + g2.pdf(x_))
 
         def jac(x_: np.ndarray) -> np.ndarray:
             """Return the chip Jacobian."""
-            return sign * (current.jac(x_) + future.jac(x_))
+            return sign * (g1.jac(x_) + g2.jac(x_))
 
         return pdf, jac
 
@@ -353,12 +383,12 @@ class Oil(Chip):
 
 def make_field_potential(sig: float = 10) -> tuple[Potential, Jacobian]:
     """Return the PDF and the Jacobian of the field potential."""
-    bottom_left = ErfDist(np.array([0, 0]), sig)
-    top_right = ErfcDist(np.array([X_MAX, Y_MAX]), sig)
+    bottom_left = ErfcDist(np.array([0, 0]), sig)
+    top_right = ErfDist(np.array([X_MAX, Y_MAX]), sig)
 
     def pdf(x_: np.ndarray) -> float:
         """Return the field potential."""
-        return 2.0 + bottom_left.pdf(x_) + top_right.pdf(x_)
+        return bottom_left.pdf(x_) + top_right.pdf(x_)
 
     def jac(x_: np.ndarray) -> np.ndarray:
         """Return the field Jacobian."""
@@ -378,9 +408,9 @@ def make_field_potential(sig: float = 10) -> tuple[Potential, Jacobian]:
 #     )
 
 
-def game_loop() -> None:
+def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
     """Run the game loop."""
-    my_id = int(input())  # 0 to 4 (?)
+    my_id = int(get_input())  # 0 to 4 (?)
 
     chip_registry: dict[int, Chip] = {}
     mine_registry: dict[int, Chip] = {}
@@ -395,12 +425,12 @@ def game_loop() -> None:
 
         # Load the visible entities
         # The number of chips under your control
-        player_chip_count = int(input())  # noqa: F841
+        player_chip_count = int(get_input())  # noqa: F841
         # The total number of entities on the table, including your chips
-        entity_count = int(input())
+        entity_count = int(get_input())
 
         for _ in range(entity_count):
-            inputs = input()
+            inputs = get_input()
             chip: Chip = Chip.from_string(inputs)
 
             chip_registry[chip.id] = chip
@@ -423,7 +453,7 @@ def game_loop() -> None:
 
             # Compute the potential and minimize it
             other_chip_pot: tuple[tuple[Potential, Jacobian], ...] = tuple(
-                chip_.make_potential(chip.r, sig=10)
+                chip_.make_potential(chip.r)
                 for id_, chip_ in chip_registry.items()
                 if id_ != chip_id
             )
@@ -432,14 +462,20 @@ def game_loop() -> None:
                 """Return the field potential."""
                 return field_pot[0](x_) + np.sum([p[0](x_) for p in chip_pots])
 
-            def jac(x_: np.ndarray, other_pot: tuple = other_chip_pot) -> np.ndarray:
+            def jac(x_: np.ndarray, chip_pots: tuple = other_chip_pot) -> np.ndarray:
                 """Return the field Jacobian."""
-                return field_pot[1](x_) + np.sum([p[1](x_) for p in other_pot])
+                return field_pot[1](x_) + np.sum([p[1](x_) for p in chip_pots])
 
-            # X, Y = np.meshgrid(
-            # np.linspace(0, X_MAX, 1000), np.linspace(0, Y_MAX, 1000))
-            # Z: np.ndarray = pdf[0](np.dstack((X, Y)))
-            # print(Z.tolist())
+            # X, Y = np.meshgrid(np.linspace(0, X_MAX, 1000),
+            # np.linspace(0, Y_MAX, 1000))
+            # print(np.dstack((X, Y)).shape)
+            # print(np.max(field_pot[0](np.dstack((X, Y)))))
+            # for p in other_chip_pot:
+            #     print(np.max(p[0](np.dstack((X, Y)))))
+            # Z: np.ndarray = pdf(np.dstack((X, Y)))
+            # print(np.max(Z))
+            # print(Z.shape)
+            # Z.tofile("map.bin")
 
             res = minimize(pdf, chip.p.np, bounds=BOUNDS, jac=jac)
             dest = Point(res.x[0], res.x[1])
@@ -448,8 +484,20 @@ def game_loop() -> None:
             if dest in chip:
                 debug(f"dest in chip: {dest} in {chip.p}+-{chip.r}")
                 print("WAIT")
-            else:
+            elif isclose(chip.v.rho, 0.0):
+                debug("start moving")
                 print(f"{res.x[0]} {res.x[1]}")
+            else:
+                path = dest - chip.p
+                if ((chip.v.theta - path.theta + pi / 2) % (2 * pi)) > pi:
+                    debug("going backward")
+                    print(f"{res.x[0]} {res.x[1]}")
+                elif abs(path @ chip.v.rot(pi / 2).unit()) < chip.r:
+                    debug(f"going in the good direction: {chip.v.theta/pi*180.}°")
+                    print("WAIT")
+                else:
+                    debug("missing the dest")
+                    print(f"{res.x[0]} {res.x[1]}")
 
 
 if __name__ == "__main__":
