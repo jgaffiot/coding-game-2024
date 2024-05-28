@@ -1,4 +1,14 @@
-"""CodingGames challenge: Poker Chip Race."""
+"""
+CodingGames challenge: Poker Chip Race.
+
+To read a debug map:
+>>> import plotly.graph_objects as go
+>>> X_MAX = 800
+>>> Y_MAX = 515
+>>> X, Y = np.meshgrid(np.linspace(0, X_MAX, 1000), np.linspace(0, Y_MAX, 1000))
+>>> Z = np.fromfile("map.bin").reshape((1000,1000))
+>>> go.Figure(data=[go.Surface(x=X, y=Y, z=Z)]).show()
+"""
 
 import sys
 from abc import ABC, abstractmethod
@@ -11,7 +21,7 @@ from scipy.optimize import minimize
 from scipy.special import erf, erfc
 from scipy.stats import multivariate_normal
 
-VERBOSE = True
+VERBOSE = False
 
 X_MAX = 800
 Y_MAX = 515
@@ -53,19 +63,20 @@ class Dist(ABC):
 class NormalDist(Dist):
     """The normal multivariate distribution."""
 
-    def __init__(self, x0: np.ndarray, sig: float) -> None:
+    def __init__(self, x0: np.ndarray, sig: float, alpha: float = 1.0) -> None:
         """Initialize self."""
         self.x0 = x0
         self.sig = sig
+        self.alpha = alpha
         self.dist = multivariate_normal(x0, sig)
 
     def pdf(self, x_: np.ndarray) -> float:
         """Return the probability density function."""
-        return self.dist.pdf(x_)
+        return self.alpha * self.dist.pdf(x_)
 
     def jac(self, x_: np.ndarray) -> np.ndarray:
         """Return the Jacobian."""
-        return self.dist.pdf(x_) * (x_ - self.x0) / self.sig
+        return self.alpha * self.dist.pdf(x_) * (x_ - self.x0) / self.sig
 
 
 class ErfDist(Dist):
@@ -203,11 +214,10 @@ class Point(Vec2):
         """Distance to another point."""
         return sqrt((self.x - p.x) ** 2 + (self.y - p.y) ** 2)
 
-    def advance(self, dist: int) -> None:
+    def forward(self, dist: int) -> None:
         """Advance the point from the given dist (same argument)."""
-        theta = self.theta
-        self.x += dist * cos(theta)
-        self.y += dist * sin(theta)
+        self.x += dist * cos(self.theta)
+        self.y += dist * sin(self.theta)
         self.x = min(max(0.0, self.x), X_MAX)
         self.y = min(max(0.0, self.y), Y_MAX)
 
@@ -340,8 +350,8 @@ class Chip:
     def make_potential(
         self,
         other_radius: float,
-        sig: float = 0.1,
-        alpha: float = 2,
+        sig: float = 10,
+        alpha: float = 10,
     ) -> tuple[Potential, Jacobian]:
         """Return the PDF and the Jacobian of the chip potential."""
         if other_radius == self.r:
@@ -349,14 +359,14 @@ class Chip:
                 [np.zeros(x_.shape[:-1]), np.zeros(x_.shape[:-1])]
             )
 
-        if self.r > other_radius:
-            sign = -1
-            g1 = NormalDist(self.future.p.np, sig * alpha * self.r)
+        if self.r < other_radius:
+            sign = -1.0 * alpha * self.r
+            g1 = NormalDist(self.future.p.np, sig * sig * self.r)
             g2 = NormalDist(self.future.future.p.np, sig * self.r)
         else:
-            sign = 1
-            g1 = NormalDist(self.p.np, sig * self.r)
-            g2 = NormalDist(self.future.p.np, sig * self.r)
+            sign = max(alpha, self.r) ** 2
+            g1 = NormalDist(self.p.np, other_radius + self.r)
+            g2 = NormalDist(self.future.p.np, other_radius + self.r)
 
         def pdf(x_: np.ndarray) -> float:
             """Return the chip potential."""
@@ -397,31 +407,20 @@ def make_field_potential(sig: float = 10) -> tuple[Potential, Jacobian]:
     return pdf, jac
 
 
-# def field_potential(x: np.ndarray, y: np.ndarray, sig: float = 10) -> np.ndarray:
-#     """Compute the field potential."""
-#     return (
-#         2.0
-#         + erfc(x / sig)
-#         + erfc(y / sig)
-#         + erf((x - X_MAX) / sig)
-#         + erf((y - Y_MAX) / sig)
-#     )
-
-
 def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
     """Run the game loop."""
     my_id = int(get_input())  # 0 to 4 (?)
-
-    chip_registry: dict[int, Chip] = {}
-    mine_registry: dict[int, Chip] = {}
-    opponent_registry: dict[int, Chip] = {}
-    oil_registry: dict[int, Chip] = {}
 
     field_pot = make_field_potential(sig=10)
 
     turn_index = 0
     while True:
         turn_index += 1
+
+        chip_registry: dict[int, Chip] = {}
+        mine_registry: dict[int, Chip] = {}
+        opponent_registry: dict[int, Chip] = {}
+        oil_registry: dict[int, Chip] = {}
 
         # Load the visible entities
         # The number of chips under your control
@@ -453,31 +452,35 @@ def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
 
             # Compute the potential and minimize it
             other_chip_pot: tuple[tuple[Potential, Jacobian], ...] = tuple(
-                chip_.make_potential(chip.r)
+                chip_.make_potential(chip.r, sig=100, alpha=1000)
                 for id_, chip_ in chip_registry.items()
                 if id_ != chip_id
             )
 
             def pdf(x_: np.ndarray, chip_pots: tuple = other_chip_pot) -> float:
                 """Return the field potential."""
-                return field_pot[0](x_) + np.sum([p[0](x_) for p in chip_pots])
+                return field_pot[0](x_) + np.sum([p[0](x_) for p in chip_pots], axis=0)
 
-            def jac(x_: np.ndarray, chip_pots: tuple = other_chip_pot) -> np.ndarray:
-                """Return the field Jacobian."""
-                return field_pot[1](x_) + np.sum([p[1](x_) for p in chip_pots])
+            # def jac(x_: np.ndarray, chip_pots: tuple = other_chip_pot) -> np.ndarray:
+            #     """Return the field Jacobian."""
+            #     return field_pot[1](x_) + np.sum([p[1](x_) for p in chip_pots],
+            #     axis=0)
 
             # X, Y = np.meshgrid(np.linspace(0, X_MAX, 1000),
             # np.linspace(0, Y_MAX, 1000))
-            # print(np.dstack((X, Y)).shape)
-            # print(np.max(field_pot[0](np.dstack((X, Y)))))
-            # for p in other_chip_pot:
-            #     print(np.max(p[0](np.dstack((X, Y)))))
             # Z: np.ndarray = pdf(np.dstack((X, Y)))
-            # print(np.max(Z))
-            # print(Z.shape)
             # Z.tofile("map.bin")
 
-            res = minimize(pdf, chip.p.np, bounds=BOUNDS, jac=jac)
+            res = minimize(
+                pdf,
+                chip.p.np,
+                bounds=BOUNDS,
+                # jac=jac,
+                method="Nelder-Mead",
+                # options={"disp": True},
+            )
+            if VERBOSE:
+                debug(res)
             dest = Point(res.x[0], res.x[1])
             debug(f"{dest=}")
 
