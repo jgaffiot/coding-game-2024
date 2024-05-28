@@ -1,0 +1,93 @@
+---
+# exclude:
+fail_fast: true
+minimum_pre_commit_version: 1.15.0
+
+repos:
+# Python
+  - repo: local
+    hooks:
+      - id: black
+        name: Black
+        entry: black
+        language: system
+        types: [python]
+
+      - id: ruff
+        name: Ruff
+        entry: ruff check
+        language: system
+        exclude: env/
+        types: [python]
+
+      - id: mypy
+        name: MyPy
+        entry: mypy
+        language: system
+        args: [--config-file, pyproject.toml]
+        exclude: app-maze/test/|app-maze/doc/|env
+        types: [python]
+
+        # All files + miscellaneous
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-added-large-files
+      - id: forbid-new-submodules
+      - id: no-commit-to-branch
+        args: [--branch, master]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        types: [text]
+      - id: fix-byte-order-marker
+        types: [text]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        types: [text]
+      - id: check-merge-conflict
+        types: [text]
+      - id: detect-private-key
+        types: [text]
+      - id: check-executables-have-shebangs
+        types: [text, executable]
+      - id: check-shebang-scripts-are-executable
+        types: [text]
+      - id: check-json
+        types: [json]
+      - id: pretty-format-json
+        args: [--no-sort-keys, --autofix, --no-ensure-ascii]
+        types: [json]
+      - id: check-symlinks
+        types: [symlink]
+      - id: destroyed-symlinks
+      - id: check-toml
+        types: [toml]
+      - id: check-yaml
+        types: [yaml]
+      - id: name-tests-test
+        args: [--django]
+        files: (^|/)tests/.+\.py$
+      - id: check-ast
+        types: [python]
+      - id: check-builtin-literals
+        types: [python]
+      - id: check-docstring-first
+        types: [python]
+      - id: debug-statements
+        types: [python]
+      - id: requirements-txt-fixer
+
+# Markdown
+# alternative: https://github.com/jackdewinter/pymarkdown/
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.17
+    hooks:
+      - id: mdformat
+        additional_dependencies:
+          - mdformat-gfm
+          - mdformat-frontmatter
+          - mdformat-footnote
+          - mdformat-tables
+          - mdformat-black
+        types: [markdown]
+        args: [--wrap, '88']

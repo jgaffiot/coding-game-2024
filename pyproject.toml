@@ -8,6 +8,8 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4"
+numpy = "^1.26.4"
+scipy = "^1.13.0"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -16,6 +18,10 @@ ruff = "^0.4.4"
 mypy = "^1.10.0"
 ipython = "^8.24.0"
 ipdb = "^0.13.13"
+
+
+[tool.poetry.group.test.dependencies]
+plotly = "^5.22.0"
 
 [build-system]
 requires = ["poetry-core"]
