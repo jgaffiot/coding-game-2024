@@ -13,7 +13,7 @@ To read a debug map:
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from math import atan2, cos, isclose, pi, sin, sqrt
+from math import atan2, cos, isclose, pi, sin, sqrt, tan
 from typing import Union
 
 import numpy as np
@@ -202,13 +202,23 @@ class Vec2:
 class Point(Vec2):
     """A 2 dimension point."""
 
+    @classmethod
+    def from_polar(cls, rho: float, theta: float) -> "Point":
+        """Create a Vec2 from polar coordinates."""
+        return cls(rho * cos(theta), rho * sin(theta))
+
     def __repr__(self) -> str:
         """Return repr(self)."""
-        return f"Point({self.x}, {self.y})"
+        return f"Point({self.x:.4f}, {self.y:.4f})"
 
     def __str__(self) -> str:
         """Return str(self)."""
-        return f"P({self.x}, {self.y})"
+        return f"P({self.x:.2f}, {self.y:.2f})"
+
+    @property
+    def out(self) -> str:
+        """Return the format expected by the challenge."""
+        return f"{self.x} {self.y}"
 
     def dist_to(self, p: "Point") -> float:
         """Distance to another point."""
@@ -233,13 +243,18 @@ class Point(Vec2):
 class Speed(Vec2):
     """A 2 dimension speed."""
 
+    @classmethod
+    def from_polar(cls, rho: float, theta: float) -> "Speed":
+        """Create a Vec2 from polar coordinates."""
+        return cls(rho * cos(theta), rho * sin(theta))
+
     def __repr__(self) -> str:
         """Return repr(self)."""
-        return f"Point({self.x}, {self.y})"
+        return f"Speed({self.x}, {self.y})"
 
     def __str__(self) -> str:
         """Return str(self)."""
-        return f"P({self.x}, {self.y})"
+        return f"V({self.x}, {self.y})"
 
 
 def distance(a: Point, b: Point) -> float:
@@ -301,7 +316,7 @@ class Chip:
     @property
     def future(self) -> "Chip":
         """Return the future chip."""
-        bounds = BOUNDS + np.array(((self.r, X_MAX - self.r), (self.r, Y_MAX - self.r)))
+        bounds = BOUNDS + np.array(((self.r, -self.r), (self.r, -self.r)))
 
         p = self.p + self.v
         v = self.v.copy()
@@ -407,6 +422,28 @@ def make_field_potential(sig: float = 10) -> tuple[Potential, Jacobian]:
     return pdf, jac
 
 
+def compute_order(dest: Point, chip: Chip) -> Point:
+    """Compute the order allowing to go to the destination."""
+    rho = 200.0 / 14.0
+    path = dest - chip.p
+    tan_ = tan(path.theta)
+
+    if (
+        rho * tan_ - chip.v.x * tan_ + chip.v.y == 0.0
+        or rho**2 * (1 + tan_**2) < (chip.v.x * tan_ - chip.v.y) ** 2
+    ):
+        theta = pi
+    else:
+        theta = 2 * (
+            atan2(
+                rho * tan_ - chip.v.x * tan_ + chip.v.y,
+                -sqrt(rho**2 * (1 + tan_**2) - (chip.v.x * tan_ - chip.v.y) ** 2) - rho,
+            )
+        )
+    dv: Speed = Speed.from_polar(rho, theta)
+    return chip.p + dv
+
+
 def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
     """Run the game loop."""
     my_id = int(get_input())  # 0 to 4 (?)
@@ -482,25 +519,27 @@ def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
             if VERBOSE:
                 debug(res)
             dest = Point(res.x[0], res.x[1])
-            debug(f"{dest=}")
+            order = compute_order(dest, chip)
+            debug(f"{dest=} => {order=}")
+            debug(f"{dest.theta=}/{order.theta=}/{(order+chip.v).theta=})")
 
             if dest in chip:
                 debug(f"dest in chip: {dest} in {chip.p}+-{chip.r}")
                 print("WAIT")
             elif isclose(chip.v.rho, 0.0):
                 debug("start moving")
-                print(f"{res.x[0]} {res.x[1]}")
+                print(order.out)
             else:
                 path = dest - chip.p
                 if ((chip.v.theta - path.theta + pi / 2) % (2 * pi)) > pi:
                     debug("going backward")
-                    print(f"{res.x[0]} {res.x[1]}")
+                    print(order.out)
                 elif abs(path @ chip.v.rot(pi / 2).unit()) < chip.r:
                     debug(f"going in the good direction: {chip.v.theta/pi*180.}°")
                     print("WAIT")
                 else:
                     debug("missing the dest")
-                    print(f"{res.x[0]} {res.x[1]}")
+                    print(order.out)
 
 
 if __name__ == "__main__":

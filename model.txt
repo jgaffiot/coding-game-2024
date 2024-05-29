@@ -1,0 +1,80 @@
+chip = Chip(p, v, r)
+
+accélération : 1/15 masse perdue @ 200 /tour
+
+chip.mass = chip.area
+
+dest = Point(xd, yd)
+path = dest - chip.p
+
+order = Point(xo, yo)
+
+oil = Chip()
+
+#oil.v.rho = 200
+#oil.area = chip.area / 15
+##oil.area * oil.v.rho = 14/15 * chip.area * chip.v.rho
+#chip.area = chip.area - chip.area / 15
+##oil.area * oil.v.rho = 14/15 * chip.area * dv.rho
+##dv.rho = oil.area * oil.v.rho / chip.area * 15/14
+##dv.rho = chip.area / 15 * oil.v.rho / chip.area * 15/14
+#dv.rho = 200 / 14
+
+oil.r = chip.r / sqrt(15)
+theta = (order - chip.p).rot(pi).theta
+oil.v = Speed.from_polar(200, theta)
+p_r = chip.r * (sqrt(14 / 15) - sqrt(1 / 15))
+oil.p = chip.p + Vec2.from_polar(p_r, theta)
+
+chip.r = chip.r * sqrt(14 / 15)
+dv = Speed.from_polar(200 / 14, (order - chip.p).theta)
+
+order | (chip.v + dv).theta = path.theta = (dest - chip.p).theta
+atan(chip.v.y + dv.rho * sin(dv.theta)/chip.v.x + dv.rho * cos(dv.theta)) = (dest - chip.p).theta
+
+chip.v + dv = path
+(chip.v + dv).theta ? path.theta
+atan((chip.v.y+dv.rho*sin(dv.theta))/(chip.v.x+dv.rho*cos(dv.theta)))=path.theta
+chip.v.y+dv.rho*sin(dv.theta)=tan(path.theta)*(chip.v.x+dv.rho*cos(dv.theta))
+
+chip.v.y+dv.rho*u=tan(path.theta)*chip.v.x + tan(path.theta) * dv.rho * u'
+u' = (chip.v.y + dv.rho*u - tan(path.theta)*chip.v.x) / (tan(path.theta) * dv.rho)
+u' = u / tan(path.theta) + (chip.v.y - tan(path.theta)*chip.v.x) / (tan(path.theta) * dv.rho)
+u(t) = C exp( dv.rho / (tan(path.theta) * dv.rho)  * t) - (chip.v.y - tan(path.theta) * chip.v.x) / dv.rho
+sin(dv.theta) = C exp( dv.rho / (tan(path.theta) * dv.rho)  * t) - (chip.v.y - tan(path.theta) * chip.v.x) / dv.rho
+
+dv.theta = 2*(
+    atan2(
+        dv.rho*tan(path.theta)-chip.v.x*tan(path.theta)+chip.v.y,
+        -sqrt(
+            dv.rho**2*(1+tan(path.theta)**2) - (chip.v.x*tan(path.theta)-chip.v.y)**2
+        ) - dv.rho
+    )
+)
+
+θ = 2 (tan^(-1)((-sqrt(ρ^2 tan^2(A) - x^2 tan^2(A) + 2 x y tan(A) + ρ^2 - y^2) - ρ)/(ρ tan(A) - x tan(A) + y)) + π n) and ρ (ρ tan^2(A) + sqrt(ρ^2 tan^2(A) - x^2 tan^2(A) + 2 x y tan(A) + ρ^2 - y^2) - x tan^2(A) + y tan(A) + ρ)!=0 and ρ tan(A) - x tan(A) + y!=0 and ρ (-x sqrt(ρ^2 tan^2(A) - x^2 tan^2(A) + 2 x y tan(A) + ρ^2 - y^2) + ρ sqrt(ρ^2 tan^2(A) - x^2 tan^2(A) + 2 x y tan(A) + ρ^2 - y^2) + x y tan(A) - ρ y tan(A) + ρ^2 - ρ x - y^2)!=0 and -π/2<Re(A)<π/2 and n element Z
+
+dv = order - chip.p
+order = dv + chip.p
+
+
+1 1 50.000000 540.708802 415.784177 0.000000 0.000000
+order = (43.00 193.00)
+
+1 1 48.304589 527.669761 409.947648 -13.039041 -5.836529
+13 -1 12.909945 755.561214 492.223789 182.546560 -81.711404
+
+1 1 46.666666 501.597213 398.262243 -26.072548 -11.685405
+13 -1 12.909945 636.072327 410.512384 -182.546560 -81.711404
+14 -1 12.472192 728.296982 499.995324 169.430047 76.047730
+
+m0 = Chip.from_string("1 1 50.000000 540.708802 415.784177 0.000000 0.000000")
+order_0 = Point(43.00, 193.00)
+
+m1 = Chip.from_string("1 1 48.304589 527.669761 409.947648 -13.039041 -5.836529")
+o1_1 = Chip.from_string("13 -1 12.909945 755.561214 492.223789 182.546560 -81.711404")
+order_1 = Point(42.00, 192.00)
+
+m2 = Chip.from_string("1 1 46.666666 501.597213 398.262243 -26.072548 -11.685405")
+o1_2 = Chip.from_string("13 -1 12.909945 636.072327 410.512384 -182.546560 -81.711404")
+o2_2 = Chip.from_string("14 -1 12.472192 728.296982 499.995324 169.430047 76.047730")
