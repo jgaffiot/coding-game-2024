@@ -10,22 +10,32 @@ To read a debug map:
 >>> go.Figure(data=[go.Surface(x=X, y=Y, z=Z)]).show()
 """
 
+from __future__ import annotations
+
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from functools import cached_property
 from math import atan2, cos, isclose, pi, sin, sqrt, tan
-from typing import Union
+from typing import TypeVar
 
 import numpy as np
 from scipy.optimize import minimize
 from scipy.special import erf, erfc
 from scipy.stats import multivariate_normal
 
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:  # Fallback for Python versions < 3.11
+    from typing_extensions import Self
+
 VERBOSE = False
 
+EPSILON = 0.001
 X_MAX = 800
 Y_MAX = 515
 BOUNDS = np.array(((0, X_MAX), (0, Y_MAX)))
+TWOPI = 2 * pi
 
 OIL_ID = -1
 
@@ -115,6 +125,9 @@ class ErfcDist(Dist):
         return -self.cst * np.exp(-(((x_ - self.x0) / self.sig) ** 2))
 
 
+AnyVec2 = TypeVar("AnyVec2", bound="Vec2")
+
+
 class Vec2:
     """A 2 dimension vector."""
 
@@ -123,18 +136,18 @@ class Vec2:
         self.x = float(x)
         self.y = float(y)
 
-    @property
+    @cached_property
     def rho(self) -> float:
         """Modulus."""
         return sqrt(self.x * self.x + self.y * self.y)
 
-    @property
+    @cached_property
     def theta(self) -> float:
         """Argument."""
         return atan2(self.y, self.x)
 
     @classmethod
-    def from_polar(cls, rho: float, theta: float) -> "Vec2":
+    def from_polar(cls, rho: float, theta: float) -> Self:
         """Create a Vec2 from polar coordinates."""
         return cls(rho * cos(theta), rho * sin(theta))
 
@@ -143,13 +156,18 @@ class Vec2:
         """Return the vector as a numpy array."""
         return np.array([self.x, self.y])
 
-    def unit(self) -> "Vec2":
+    @property
+    def pl(self) -> str:
+        """Return the vector in polar coordinates."""
+        return f"{self.rho:.2f} ei {self.theta:.2f}"
+
+    def unit(self) -> Self:
         """Return the unit vector co-linear with self."""
         return self / self.rho
 
-    def rot(self, theta: float) -> "Vec2":
+    def rot(self, theta: float) -> Self:
         """Return a vector rotated by the given angle in radian."""
-        return Vec2.from_polar(self.rho, (self.theta + theta) % (2 * pi))
+        return self.__class__.from_polar(self.rho, (self.theta + theta) % (2 * pi))
 
     def __repr__(self) -> str:
         """Return repr(self)."""
@@ -159,13 +177,13 @@ class Vec2:
         """Return str(self)."""
         return f"({self.x}, {self.y})"
 
-    def __add__(self, other: "Vec2") -> "Vec2":
+    def __add__(self, other: AnyVec2) -> Self:
         """Return self + other."""
-        return Vec2(self.x + other.x, self.y + other.y)
+        return Vec2(self.x + other.x, self.y + other.y)  # type: ignore[return-value]
 
-    def __sub__(self, other: "Vec2") -> "Vec2":
+    def __sub__(self, other: AnyVec2) -> Self:
         """Return self - other."""
-        return Vec2(self.x - other.x, self.y - other.y)
+        return Vec2(self.x - other.x, self.y - other.y)  # type: ignore[return-value]
 
     def __eq__(self, other: object) -> bool:
         """Return self == other."""
@@ -178,34 +196,29 @@ class Vec2:
             and self.__class__ == other.__class__
         )
 
-    def __mul__(self, scalar: float) -> "Vec2":
+    def __mul__(self, scalar: float) -> Self:
         """Return self * scalar."""
-        return Vec2(self.x * scalar, self.y * scalar)
+        return Vec2(self.x * scalar, self.y * scalar)  # type: ignore[return-value]
 
-    def __matmul__(self, other: "Vec2") -> float:
+    def __matmul__(self, other: AnyVec2) -> float:
         """Return self * other."""
         return self.x * other.x + self.y * other.y
 
-    def __truediv__(self, scalar: float) -> "Vec2":
+    def __truediv__(self, scalar: float) -> Self:
         """Return self / other."""
-        return Vec2(self.x / scalar, self.y / scalar)
+        return Vec2(self.x / scalar, self.y / scalar)  # type: ignore[return-value]
 
-    def __copy__(self) -> "Vec2":
+    def __copy__(self) -> Self:
         """Return copy(self)."""
         return self.copy()
 
-    def copy(self) -> "Vec2":
+    def copy(self) -> Self:
         """Return self.copy()."""
-        return Vec2(self.x, self.y)
+        return Vec2(self.x, self.y)  # type: ignore[return-value]
 
 
 class Point(Vec2):
     """A 2 dimension point."""
-
-    @classmethod
-    def from_polar(cls, rho: float, theta: float) -> "Point":
-        """Create a Vec2 from polar coordinates."""
-        return cls(rho * cos(theta), rho * sin(theta))
 
     def __repr__(self) -> str:
         """Return repr(self)."""
@@ -220,7 +233,7 @@ class Point(Vec2):
         """Return the format expected by the challenge."""
         return f"{self.x} {self.y}"
 
-    def dist_to(self, p: "Point") -> float:
+    def dist_to(self, p: Self) -> float:
         """Distance to another point."""
         return sqrt((self.x - p.x) ** 2 + (self.y - p.y) ** 2)
 
@@ -231,22 +244,17 @@ class Point(Vec2):
         self.x = min(max(0.0, self.x), X_MAX)
         self.y = min(max(0.0, self.y), Y_MAX)
 
-    def __add__(self, other: "Speed") -> "Point":  # type: ignore[override]
+    def __add__(self, other: Speed) -> Point:  # type: ignore[override]
         """Return self + other."""
         return Point(self.x + other.x, self.y + other.y)
 
-    def __sub__(self, other: Union["Speed", "Point"]) -> "Point":  # type: ignore[override]
+    def __sub__(self, other: AnyVec2) -> Point:
         """Return self - other."""
         return Point(self.x - other.x, self.y - other.y)
 
 
 class Speed(Vec2):
     """A 2 dimension speed."""
-
-    @classmethod
-    def from_polar(cls, rho: float, theta: float) -> "Speed":
-        """Create a Vec2 from polar coordinates."""
-        return cls(rho * cos(theta), rho * sin(theta))
 
     def __repr__(self) -> str:
         """Return repr(self)."""
@@ -276,7 +284,7 @@ class Chip:
         # self.opponents: dict[int, Chip] = {}
 
     @classmethod
-    def from_string(cls, string: str) -> "Chip":
+    def from_string(cls, string: str) -> Self:
         """Return a new Chip fully initialized from the given string."""
         new = cls()
         pars = zip(
@@ -290,7 +298,7 @@ class Chip:
     @classmethod
     def from_data(  # noqa: PLR0913
         cls, id_: int, player: int, r: float, x: float, y: float, vx: float, vy: float
-    ) -> "Chip":
+    ) -> Self:
         """Return a new Chip fully initialized with the given data."""
         new = cls()
         new.update(id_, player, r, x, y, vx, vy)
@@ -304,17 +312,8 @@ class Chip:
         """Return str(self)."""
         return f"Chip {self.id}, {self.player}, {self.r}, {self.p}, {self.v}"
 
-    def __contains__(self, point: Point) -> bool:
-        """Return True if the point is inside the chip or will be at the next point."""
-        return self.dist_to(point) < self.r or self.future.dist_to(point) < self.r
-
-    @property
-    def area(self) -> float:
-        """The chip area."""
-        return pi * self.r * self.r
-
-    @property
-    def future(self) -> "Chip":
+    @cached_property
+    def future(self) -> Chip:
         """Return the future chip."""
         bounds = BOUNDS + np.array(((self.r, -self.r), (self.r, -self.r)))
 
@@ -336,6 +335,15 @@ class Chip:
             v.y = -v.y
 
         return Chip.from_data(self.id, self.player, self.r, p.x, p.y, v.x, v.y)
+
+    def __contains__(self, point: Point) -> bool:
+        """Return True if the point is inside the chip or will be at the next point."""
+        return self.dist_to(point) < self.r or self.future.dist_to(point) < self.r
+
+    @cached_property
+    def area(self) -> float:
+        """The chip area."""
+        return pi * self.r * self.r
 
     def dist_to(self, p: Point) -> float:
         """Return the distance to a given Point."""
@@ -422,7 +430,26 @@ def make_field_potential(sig: float = 10) -> tuple[Potential, Jacobian]:
     return pdf, jac
 
 
-def compute_order(dest: Point, chip: Chip) -> Point:
+def compute_chip_angle_after_order(chip: Chip, order: Point) -> float:
+    """Compute the angle of the speed of a chip after an order."""
+    dv = Speed.from_polar(200 / 14, (order - chip.p).theta)
+    return (chip.v + dv).theta
+
+
+def check_order(chip: Chip, dest: Point, order: Point) -> bool:
+    """Check if the given order allows to go to the destination."""
+    dv = Speed.from_polar(200 / 14, (order - chip.p).theta)
+    chip_2 = chip.v + dv
+    # debug(f"dv {dv.pl} + chip {chip.v.pl} => {chip_2.pl}")
+    dest_angle = (dest - chip.p).theta % TWOPI
+    order_angle = (order - chip.p).theta % TWOPI
+    debug(f"theta: {dest_angle=:.3f}, {order_angle=:.3f}, chip={chip_2.theta:.3f})")
+    if abs(dest_angle - chip_2.theta) < EPSILON:
+        return True
+    return False
+
+
+def compute_order_analytically(dest: Point, chip: Chip) -> Point:
     """Compute the order allowing to go to the destination."""
     rho = 200.0 / 14.0
     path = dest - chip.p
@@ -432,16 +459,46 @@ def compute_order(dest: Point, chip: Chip) -> Point:
         rho * tan_ - chip.v.x * tan_ + chip.v.y == 0.0
         or rho**2 * (1 + tan_**2) < (chip.v.x * tan_ - chip.v.y) ** 2
     ):
-        theta = pi
+        theta = chip.v.theta + pi
     else:
-        theta = 2 * (
+        theta = -2 * (
             atan2(
                 rho * tan_ - chip.v.x * tan_ + chip.v.y,
                 -sqrt(rho**2 * (1 + tan_**2) - (chip.v.x * tan_ - chip.v.y) ** 2) - rho,
             )
         )
+
     dv: Speed = Speed.from_polar(rho, theta)
-    return chip.p + dv
+    return chip.p + chip.v + dv
+
+
+def compute_order_by_minimization(dest: Point, chip: Chip) -> Point:
+    """Compute the order allowing to go to the destination."""
+    order_rho = 100
+    target_angle = (dest - chip.p).theta
+
+    def angle_diff(order_theta_: np.ndarray) -> float:
+        """Return the squared difference between chip speed angle and target angles."""
+        order = chip.p + Speed.from_polar(order_rho, order_theta_[0])
+        chip_angle = compute_chip_angle_after_order(chip, order)
+        return (chip_angle - target_angle) ** 2
+
+    res = minimize(
+        angle_diff,
+        np.array([0.149]),
+        # method="Nelder-Mead",
+        # options={"disp": True},
+    )
+    # diff = angle_diff(np.array([res.x[0]]))
+    # debug(f"{diff=} or {(diff/pi)%TWOPI}")
+    return chip.p + Speed.from_polar(order_rho, res.x[0])
+
+
+def export_map(pdf: Callable) -> None:
+    """Export the map of the given PDF in a binary file."""
+    x_, y_ = np.meshgrid(np.linspace(0, X_MAX, 1000), np.linspace(0, Y_MAX, 1000))
+    z_: np.ndarray = pdf(np.dstack((x_, y_)))
+    z_.tofile("map.bin")
 
 
 def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
@@ -503,10 +560,7 @@ def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
             #     return field_pot[1](x_) + np.sum([p[1](x_) for p in chip_pots],
             #     axis=0)
 
-            # X, Y = np.meshgrid(np.linspace(0, X_MAX, 1000),
-            # np.linspace(0, Y_MAX, 1000))
-            # Z: np.ndarray = pdf(np.dstack((X, Y)))
-            # Z.tofile("map.bin")
+            # export_map(pdf)
 
             res = minimize(
                 pdf,
@@ -519,9 +573,11 @@ def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
             if VERBOSE:
                 debug(res)
             dest = Point(res.x[0], res.x[1])
-            order = compute_order(dest, chip)
-            debug(f"{dest=} => {order=}")
-            debug(f"{dest.theta=}/{order.theta=}/{(order+chip.v).theta=})")
+
+            order = compute_order_by_minimization(dest, chip)
+            check_order(chip, dest, order)
+            order2 = compute_order_analytically(dest, chip)
+            check_order(chip, dest, order2)
 
             if dest in chip:
                 debug(f"dest in chip: {dest} in {chip.p}+-{chip.r}")
