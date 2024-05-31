@@ -3,8 +3,6 @@ CodingGames challenge: Poker Chip Race.
 
 To read a debug map:
 >>> import plotly.graph_objects as go
->>> X_MAX = 800
->>> Y_MAX = 515
 >>> X, Y = np.meshgrid(np.linspace(0, X_MAX, 1000), np.linspace(0, Y_MAX, 1000))
 >>> Z = np.fromfile("map.bin").reshape((1000,1000))
 >>> go.Figure(data=[go.Surface(x=X, y=Y, z=Z)]).show()
@@ -16,8 +14,8 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from functools import cached_property
-from math import atan2, cos, isclose, pi, sin, sqrt, tan
-from typing import TypeVar
+from math import atan2, cos, isclose, pi, sin, sqrt
+from typing import TypeVar, cast
 
 import numpy as np
 from scipy.optimize import minimize
@@ -34,6 +32,8 @@ VERBOSE = False
 EPSILON = 0.001
 X_MAX = 800
 Y_MAX = 515
+NEW_OIL_SPEED = 200.0
+CHIP_RECOIL_SPEED = 200.0 / 14.0
 BOUNDS = np.array(((0, X_MAX), (0, Y_MAX)))
 TWOPI = 2 * pi
 
@@ -432,44 +432,8 @@ def make_field_potential(sig: float = 10) -> tuple[Potential, Jacobian]:
 
 def compute_chip_angle_after_order(chip: Chip, order: Point) -> float:
     """Compute the angle of the speed of a chip after an order."""
-    dv = Speed.from_polar(200 / 14, (order - chip.p).theta)
+    dv = Speed.from_polar(CHIP_RECOIL_SPEED, (order - chip.p).theta)
     return (chip.v + dv).theta
-
-
-def check_order(chip: Chip, dest: Point, order: Point) -> bool:
-    """Check if the given order allows to go to the destination."""
-    dv = Speed.from_polar(200 / 14, (order - chip.p).theta)
-    chip_2 = chip.v + dv
-    # debug(f"dv {dv.pl} + chip {chip.v.pl} => {chip_2.pl}")
-    dest_angle = (dest - chip.p).theta % TWOPI
-    order_angle = (order - chip.p).theta % TWOPI
-    debug(f"theta: {dest_angle=:.3f}, {order_angle=:.3f}, chip={chip_2.theta:.3f})")
-    if abs(dest_angle - chip_2.theta) < EPSILON:
-        return True
-    return False
-
-
-def compute_order_analytically(dest: Point, chip: Chip) -> Point:
-    """Compute the order allowing to go to the destination."""
-    rho = 200.0 / 14.0
-    path = dest - chip.p
-    tan_ = tan(path.theta)
-
-    if (
-        rho * tan_ - chip.v.x * tan_ + chip.v.y == 0.0
-        or rho**2 * (1 + tan_**2) < (chip.v.x * tan_ - chip.v.y) ** 2
-    ):
-        theta = chip.v.theta + pi
-    else:
-        theta = -2 * (
-            atan2(
-                rho * tan_ - chip.v.x * tan_ + chip.v.y,
-                -sqrt(rho**2 * (1 + tan_**2) - (chip.v.x * tan_ - chip.v.y) ** 2) - rho,
-            )
-        )
-
-    dv: Speed = Speed.from_polar(rho, theta)
-    return chip.p + chip.v + dv
 
 
 def compute_order_by_minimization(dest: Point, chip: Chip) -> Point:
@@ -479,7 +443,7 @@ def compute_order_by_minimization(dest: Point, chip: Chip) -> Point:
 
     def angle_diff(order_theta_: np.ndarray) -> float:
         """Return the squared difference between chip speed angle and target angles."""
-        order = chip.p + Speed.from_polar(order_rho, order_theta_[0])
+        order = chip.p + Speed.from_polar(order_rho, cast(float, order_theta_[0]))
         chip_angle = compute_chip_angle_after_order(chip, order)
         return (chip_angle - target_angle) ** 2
 
@@ -492,6 +456,19 @@ def compute_order_by_minimization(dest: Point, chip: Chip) -> Point:
     # diff = angle_diff(np.array([res.x[0]]))
     # debug(f"{diff=} or {(diff/pi)%TWOPI}")
     return chip.p + Speed.from_polar(order_rho, res.x[0])
+
+
+def check_order(chip: Chip, dest: Point, order: Point) -> bool:
+    """Check if the given order allows to go to the destination."""
+    dv = Speed.from_polar(CHIP_RECOIL_SPEED, (order - chip.p).theta)
+    chip_2 = chip.v + dv
+    # debug(f"dv {dv.pl} + chip {chip.v.pl} => {chip_2.pl}")
+    dest_angle = (dest - chip.p).theta % TWOPI
+    order_angle = (order - chip.p).theta % TWOPI
+    debug(f"theta: {dest_angle=:.3f}, {order_angle=:.3f}, chip={chip_2.theta:.3f})")
+    if abs(dest_angle - chip_2.theta) < EPSILON:
+        return True
+    return False
 
 
 def export_map(pdf: Callable) -> None:
@@ -548,7 +525,7 @@ def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
             other_chip_pot: tuple[tuple[Potential, Jacobian], ...] = tuple(
                 chip_.make_potential(chip.r, sig=100, alpha=1000)
                 for id_, chip_ in chip_registry.items()
-                if id_ != chip_id
+                if id_ != chip_id and chip_.v.rho < NEW_OIL_SPEED / 2.0
             )
 
             def pdf(x_: np.ndarray, chip_pots: tuple = other_chip_pot) -> float:
@@ -576,8 +553,6 @@ def game_loop() -> None:  # noqa: C901,PLR0912,PLR0915
 
             order = compute_order_by_minimization(dest, chip)
             check_order(chip, dest, order)
-            order2 = compute_order_analytically(dest, chip)
-            check_order(chip, dest, order2)
 
             if dest in chip:
                 debug(f"dest in chip: {dest} in {chip.p}+-{chip.r}")
